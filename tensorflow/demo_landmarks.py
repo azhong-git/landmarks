@@ -7,6 +7,20 @@ detection_model_path = 'models/haarcascade_frontalface_default.xml'
 face_detector = cv2.CascadeClassifier(detection_model_path)
 landmark_model_path = 'models/mtcnn_onet.h5.pb'
 
+def draw_pose(image, rotation_matrix, where_to_draw):
+    direction = np.dot(rotation_matrix, np.array([[1], [0], [0]]))
+    print('dirX is {}'.format(direction[0][0]))
+    if (direction[0][0] < 0):
+        return
+
+    for i in range(3):
+        axis = np.array([[0], [0], [0]])
+        axis[i][0] = 50
+        direction = np.dot(rotation_matrix, axis)
+        color = [0, 0, 0]
+        color[i] = 255
+        color = tuple(color)
+        cv2.line(image, where_to_draw, (int(where_to_draw[0]+direction[0][0]), int(where_to_draw[1]+direction[1][0])), color, 3)
 
 # load tensorflow model
 graph = tf.Graph()
@@ -33,10 +47,33 @@ cv2.namedWindow('window_frame')
 video_capture = cv2.VideoCapture(0)
 face_tracking = False
 
+# for head pose solving
+model_points = np.array([
+    (0.0, 0.0, 0.0),             # Nose tip
+    # (0.0, -330.0, -65.0),        # Chin
+    (-200.0, 170.0, -135.0),     # Left eye
+    (200.0, 170.0, -135.0),      # Right eye
+    (-150.0, -150.0, -125.0),    # Left Mouth corner
+    (150.0, -150.0, -125.0)      # Right mouth corner
+])
+
+
 while True:
     bgr_image = video_capture.read()[1]
     height = bgr_image.shape[0]
     width = bgr_image.shape[1]
+
+    # for head pose solving
+    focal_length = width
+    center = (width/2.0, height/2.0)
+    camera_matrix = np.array(
+        [[focal_length, 0, center[0]],
+         [0, focal_length, center[1]],
+         [0, 0, 1]], dtype = "double"
+    )
+    dist_coeffs = np.zeros((4,1))
+    # end of head pose solving
+
     gray_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2GRAY)
     start_frame = time.time()
     if face_tracking == False:
@@ -52,7 +89,6 @@ while True:
     face_crop_original = cv2.resize(face_crop_original, (48, 48))
     face_crop = (face_crop_original - 127.5) / 127.5
     face_crop = np.expand_dims(face_crop, 0)
-    cv2.rectangle(bgr_image, (x, y), (x + w, y + h), (255, 255, 255), 2)
     print("cropping took {} ms".format((time.time()-start_frame)*1e3))
     start = time.time()
     landmark_prediction = sess.run([prob_output_operation.outputs[0],
@@ -71,6 +107,7 @@ while True:
         cv2.imshow('failed', face_crop_original)
         continue
     x1, y1, x2, y2 = [int(roi[0]*w+x), int(roi[1]*h+y), int(roi[2]*w+x+w), int(roi[3]*h+y+h)]
+    cv2.rectangle(bgr_image, (x, y), (x + w, y + h), (255, 255, 255), 2)
     cv2.rectangle(bgr_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
     if (x2 - x1) > (y2 - y1):
         diff = (x2-x1)-(y2-y1)
@@ -81,6 +118,21 @@ while True:
         x1 = max(int(x1-diff/2), 0)
         x2 = min(int(x2+diff/2), width-1)
     face_coordinates = [x1, y1, x2-x1, y2-y1]
+
+    #2D image points. If you change the image, you need to change vector
+    image_points = np.array([
+        (pts[2]*w+x, pts[7]*h+y),
+        (pts[0]*w+x, pts[5]*h+y),
+        (pts[1]*w+x, pts[6]*h+y),
+        (pts[3]*w+x, pts[8]*h+y),
+        (pts[4]*w+x, pts[9]*h+y)
+    ], dtype="double")
+
+    (success, rotation_vector, translation_vector) = cv2.solvePnP(model_points, image_points, camera_matrix, dist_coeffs)
+    print(rotation_vector, translation_vector)
+    if success:
+        rotation_matrix, _ = cv2.Rodrigues(rotation_vector)
+        draw_pose(bgr_image, rotation_matrix, (50, 50))
 
     for i in range(0, 5):
         cv2.circle(bgr_image, (int(pts[i]*w+x), int(pts[i+5]*h+y)), 2, (0, 255, 0))
