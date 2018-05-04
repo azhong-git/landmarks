@@ -9,9 +9,9 @@ landmark_model_path = 'models/mtcnn_onet.h5.pb'
 
 def draw_pose(image, rotation_matrix, where_to_draw):
     direction = np.dot(rotation_matrix, np.array([[1], [0], [0]]))
-    print('dirX is {}'.format(direction[0][0]))
-    if (direction[0][0] < 0):
-        return
+    # print('dirX is {}'.format(direction[0][0]))
+    # if (direction[0][0] < 0):
+    #     return
 
     for i in range(3):
         axis = np.array([[0], [0], [0]])
@@ -57,6 +57,7 @@ model_points = np.array([
     (150.0, -150.0, -125.0)      # Right mouth corner
 ])
 
+last_frame_valid = False
 
 while True:
     bgr_image = video_capture.read()[1]
@@ -120,19 +121,41 @@ while True:
     face_coordinates = [x1, y1, x2-x1, y2-y1]
 
     #2D image points. If you change the image, you need to change vector
+    chin_x = pts[2] + (pts[4] - pts[2]) + (pts[3] - pts[2])
+    chin_y = pts[7] + (pts[9] - pts[7]) + (pts[8] - pts[7])
     image_points = np.array([
         (pts[2]*w+x, pts[7]*h+y),
+        # (chin_x*w+x, chin_y*h+y),
         (pts[0]*w+x, pts[5]*h+y),
         (pts[1]*w+x, pts[6]*h+y),
         (pts[3]*w+x, pts[8]*h+y),
         (pts[4]*w+x, pts[9]*h+y)
     ], dtype="double")
 
-    (success, rotation_vector, translation_vector) = cv2.solvePnP(model_points, image_points, camera_matrix, dist_coeffs)
-    print(rotation_vector, translation_vector)
+    if not last_frame_valid:
+        (success, rotation_vector, translation_vector) = cv2.solvePnP(model_points, image_points, camera_matrix, dist_coeffs)
+    else:
+        (success, rotation_vector, translation_vector) = cv2.solvePnP(model_points, image_points, camera_matrix, dist_coeffs, last_rotation_vector, last_translation_vector, True)
+
+    # print(rotation_vector, translation_vector)
+
     if success:
         rotation_matrix, _ = cv2.Rodrigues(rotation_vector)
-        draw_pose(bgr_image, rotation_matrix, (50, 50))
+        direction = np.dot(rotation_matrix, np.array([[1], [0], [0]]))
+        if direction[0][0] >= 0:
+            print("rotation vector", rotation_vector)
+            norm = np.linalg.norm(rotation_vector)
+            rotation_vector_normalized = rotation_vector / norm
+            print("norm", norm)
+            print("rotation vector norm", rotation_vector_normalized)
+            last_frame_valid = True
+            last_rotation_vector = rotation_vector.copy()
+            last_translation_vector = translation_vector.copy()
+            draw_pose(bgr_image, rotation_matrix, (50, 50))
+        else:
+            last_frame_valid = False
+    else:
+        last_frame_valid = False
 
     for i in range(0, 5):
         cv2.circle(bgr_image, (int(pts[i]*w+x), int(pts[i+5]*h+y)), 2, (0, 255, 0))
